@@ -23,6 +23,7 @@ pub mod rivalz_goalflip {
         // Set the player's position and corner
         game.position = position;
         game.corner = corner;
+        game.bump = *ctx.bumps.get("game").unwrap();
 
         let randomness =
             recent_blockhashes::last_blockhash_accessor(&ctx.accounts.recent_blockhashes)?;
@@ -35,7 +36,7 @@ pub mod rivalz_goalflip {
 
         // Get the recipient account
         let to = game.player;
-        let amount = 100000000;
+        let amount = 100000000; // 0.1 sol
 
         // Transfer Solana lamports from the user account to the game account
         let transfer_to_game = solana_program::system_instruction::transfer(
@@ -53,6 +54,21 @@ pub mod rivalz_goalflip {
             &[&[b"transfer".as_ref(), &[0u8; 32]][..]],
         )?;
 
+        msg!("Transfer to game account: {} lamports", amount);
+        msg!(
+            "ctx.accounts.authority.key(): {}",
+            ctx.accounts.authority.key()
+        );
+        msg!("game.to_account_info().key: {}", game.to_account_info().key);
+        msg!(
+            "game.to_account_info().owner: {}",
+            game.to_account_info().owner
+        );
+        msg!(
+            "ctx.accounts.system_program.to_account_info().key: {}",
+            ctx.accounts.system_program.to_account_info().key
+        );
+
         // Transfer Solana lamports from the game account to the player account or the program owner account
         let transfer_to_winner_or_owner = if game.position == Position::Goalkeeper {
             match game.corner {
@@ -66,53 +82,43 @@ pub mod rivalz_goalflip {
             }
         };
 
-        msg!(
-            "transfer_to_winner_or_owner: {:?}",
-            transfer_to_winner_or_owner
-        );
-        msg!(
-            "game.to_account_info().owner: {:?}",
-            game.to_account_info().owner
-        );
-        msg!(
-            "game.to_account_info().key: {:?}",
-            game.to_account_info().key
-        );
-        msg!("amount: {:?}", amount);
-
         // TODO:
-        // 1. Fix Issue:     Error: failed to send transaction: Transaction simulation failed: Error processing Instruction 0: An account required by the instruction is missing
-        // 2. Fix Issue:     Error: failed to send transaction: Transaction simulation failed: Error processing Instruction 0: Program failed to completeError: failed to send transaction: Transaction simulation failed: Error processing Instruction 0: Cross-program invocation with unauthorized signer or writable account
+        // 1. Fix Issue:     Error:  An account required by the instruction is missing
+        // 2. Fix Issue:     Error: Program failed to completeError: failed to send transaction:
+        //                   Transaction simulation failed: Error processing Instruction 0: Cross-program invocation
+        //                   with unauthorized signer or writable account
 
-        if let Some(winner) = transfer_to_winner_or_owner {
-            let transfer_to_winner = solana_program::system_instruction::transfer(
-                &game.to_account_info().key,
-                &winner,
-                amount,
-            );
-            solana_program::program::invoke_signed(
-                &transfer_to_winner,
-                &[
-                    game.to_account_info(),
-                    ctx.accounts.system_program.to_account_info(),
-                ],
-                &[&[b"transfer".as_ref(), &[0u8; 32]][..]],
-            )?;
-        } else {
-            let transfer_to_owner = solana_program::system_instruction::transfer(
-                &game.to_account_info().key,
-                &game.to_account_info().owner,
-                amount,
-            );
-            solana_program::program::invoke_signed(
-                &transfer_to_owner,
-                &[
-                    game.to_account_info(),
-                    ctx.accounts.system_program.to_account_info(),
-                ],
-                &[&[b"transfer".as_ref(), &[0u8; 32]][..]],
-            )?;
-        }
+        // if let Some(winner) = transfer_to_winner_or_owner {
+        //     let transfer_to_winner = solana_program::system_instruction::transfer(
+        //         &game.to_account_info().key,
+        //         &winner,
+        //         amount,
+        //     );
+        //     solana_program::program::invoke_signed(
+        //         &transfer_to_winner,
+        //         &[
+        //             ctx.accounts.authority.to_account_info(),
+        //             game.to_account_info(),
+        //             ctx.accounts.system_program.to_account_info(),
+        //         ],
+        //         &[],
+        //     )?;
+        // } else {
+        //     let transfer_to_owner = solana_program::system_instruction::transfer(
+        //         &game.to_account_info().key,
+        //         &game.to_account_info().owner,
+        //         amount,
+        //     );
+        //     solana_program::program::invoke_signed(
+        //         &transfer_to_owner,
+        //         &[
+        //             ctx.accounts.authority.to_account_info(),
+        //             game.to_account_info(),
+        //             ctx.accounts.system_program.to_account_info(),
+        //         ],
+        //         &[&[b"game".as_ref(), &[game.bump]][..]],
+        //     )?;
+        // }
 
         // Update the game status and random corner
         game.status = Status::Completed;
@@ -128,6 +134,7 @@ pub struct Play<'info> {
         init,
         payer = authority,
         space = 8 + 100,
+        seeds = [b"game", authority.key().as_ref()], bump
     )]
     pub game: Account<'info, Game>,
     /// CHECK: ?
@@ -147,6 +154,7 @@ pub struct Game {
     pub corner: Corner,
     pub payment: u64,
     pub status: Status,
+    pub bump: u8,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq)]
