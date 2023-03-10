@@ -1,7 +1,16 @@
 use anchor_lang::prelude::*;
 
 #[error_code]
-pub enum Err {
+pub enum ErrorCode {
     #[msg("Permission denied")]
-    PermissionDenied
+    PermissionDenied,
+
+    #[msg("Game is already completed")]
+    GameAlreadyCompleted,
+
+    #[msg("Invalid Position")]
+    InvalidPosition,
+
+    #[msg("Invalid Corner")]
+    InvalidCorner,
 }
