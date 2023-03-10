@@ -12,11 +12,7 @@ const ADMIN_PUBKEY: &[u8] = b"aut69244nPQ5A23MKwScxMiZxvsYeepBkNuaxK2TqSd";
 
 #[program]
 pub mod rivalz_goalflip {
-
     use crate::access_control::is_admin;
-    use anchor_lang::solana_program;
-    use anchor_lang::solana_program::native_token::LAMPORTS_PER_SOL;
-
     use super::*;
 
     #[access_control(is_admin(& ctx.accounts.admin))]
@@ -29,87 +25,89 @@ pub mod rivalz_goalflip {
         Ok(())
     }
 
-    pub fn play(ctx: Context<PlayContext>, position: String, corner: String) -> Result<()> {
-        let game_match = &mut ctx.accounts.game_match;
-        let game = &mut ctx.accounts.game;
+    pub fn play(ctx: Context<PlayContext>, position: String, corner: String, bet_amount: u64) -> Result<()> {
+        ctx.accounts.game.latest_match = ctx.accounts.game_match.key();
+        ctx.accounts.game.last_play_date = Clock::get()?.unix_timestamp as u64;
+        ctx.accounts.game.total_volume += bet_amount;
 
-        // Check if the game is already completed
-        if game_match.status == Status::Completed {
-            return Err(ErrorCode::GameAlreadyCompleted.into());
-        }
 
-        game_match.position = match parse_position(&position) {
+        ctx.accounts.game_match.position = match parse_position(&position) {
             Some(position) => position,
             None => return Err(ErrorCode::InvalidPosition.into()),
         };
 
-        game_match.corner = match parse_corner(&corner) {
+        ctx.accounts.game_match.player_corner = match parse_corner(&corner) {
             Some(corner) => corner,
             None => return Err(ErrorCode::InvalidCorner.into()),
         };
-        game_match.bump = *ctx.bumps.get("game").unwrap();
+
 
         let randomness =
             recent_blockhashes::last_blockhash_accessor(&ctx.accounts.recent_blockhashes)?;
 
         // Select a random corner
         let random_corner: Corner = match randomness_tools::expand(randomness, 2) {
-            0 => Corner::TopLeft,
-            _ => Corner::TopRight,
+            0 => Corner::Left,
+            _ => Corner::Right,
         };
 
-        // Get the recipient account
-        let to = game_match.player;
-        let amount = LAMPORTS_PER_SOL / 10;
-
-        // Transfer Solana lamports from the game account to the winner account or the program player account
-        let (transfer_to_winner_or_bot_or_player, is_bot_winner) =
-            if game_match.position == Position::Goalkeeper {
-                match game_match.corner {
-                    Corner::TopLeft => (None, random_corner == Corner::TopRight),
-                    _ => (Some(to), random_corner == Corner::TopLeft),
-                }
-            } else {
-                match game_match.corner {
-                    Corner::TopRight => (None, random_corner == Corner::TopLeft),
-                    _ => (Some(to), random_corner == Corner::TopRight),
-                }
-            };
-
-        if is_bot_winner {
-            let transfer_to_bot = solana_program::system_instruction::transfer(
-                &game.to_account_info().key,
-                &to,
-                amount * game.multiplier as u64,
-            );
-            solana_program::program::invoke_signed(
-                &transfer_to_bot,
-                &[
-                    ctx.accounts.authority.to_account_info(),
-                    game.to_account_info(),
-                    ctx.accounts.system_program.to_account_info(),
-                ],
-                &[],
-            )?;
-        } else if let Some(winner_or_bot) = transfer_to_winner_or_bot_or_player {
-            let transfer_to_winner = solana_program::system_instruction::transfer(
-                &game.to_account_info().key,
-                &winner_or_bot,
-                amount,
-            );
-            solana_program::program::invoke_signed(
-                &transfer_to_winner,
-                &[
-                    ctx.accounts.authority.to_account_info(),
-                    game.to_account_info(),
-                    ctx.accounts.system_program.to_account_info(),
-                ],
-                &[],
-            )?;
+        //balance check
+        if ctx.accounts.player.lamports() < bet_amount {
+            return err!(ErrorCode::NoEnoughFund);
         }
-        // Update the game status and random corner
-        // game_match.status = Status::Completed;
-        // game_match.corner = random_corner;
+        ctx.accounts.game_match.won = random_corner != ctx.accounts.game_match.player_corner;
+
+        if ctx.accounts.game.commission > 0 { // FEE
+            **ctx
+                .accounts
+                .player
+                .to_account_info()
+                .try_borrow_mut_lamports()? -= ctx.accounts.game.commission;
+
+            **ctx
+                .accounts
+                .game
+                .to_account_info()
+                .try_borrow_mut_lamports()? += ctx.accounts.game.commission;
+        }
+
+
+        if ctx.accounts.game_match.won {
+            msg!("you won!");
+
+            ctx.accounts.game.win_count += 1;
+            ctx.accounts.game_match.won_amount = bet_amount * ctx.accounts.game.multiplier as u64;
+
+            let transfer_amount = ctx.accounts.game_match.won_amount - bet_amount;
+
+            **ctx
+                .accounts
+                .game
+                .to_account_info()
+                .try_borrow_mut_lamports()? -= transfer_amount;
+
+            **ctx
+                .accounts
+                .player
+                .to_account_info()
+                .try_borrow_mut_lamports()? += transfer_amount;
+        } else {
+            msg!("you lost :(");
+
+            ctx.accounts.game.lose_count += 1;
+            **ctx
+                .accounts
+                .player
+                .to_account_info()
+                .try_borrow_mut_lamports()? -= bet_amount;
+
+            **ctx
+                .accounts
+                .game
+                .to_account_info()
+                .try_borrow_mut_lamports()? += bet_amount;
+        }
+
 
         Ok(())
     }
@@ -118,12 +116,20 @@ pub mod rivalz_goalflip {
 #[account]
 pub struct GameMatch {
     pub game: Pubkey,
+    //32
     pub player: Pubkey,
+    //32
+    pub won: bool,
+    //1
     pub position: Position,
-    pub corner: Corner,
-    pub payment: u64,
-    pub status: Status,
-    pub bump: u8,
+    //1
+    pub player_corner: Corner,
+    //1
+    pub bet_amount: u64,
+    //8
+    pub won_amount: u64,
+    //8
+    pub match_date: u64,//8
 }
 
 #[account]
@@ -142,6 +148,9 @@ pub struct Game {
     pub win_count: u64,
     //8
     pub total_volume: u64,
+    //32
+    pub latest_match: Pubkey,
+    //32
     //8
     pub name: Vec<u8>, //  30
 }
@@ -149,11 +158,10 @@ pub struct Game {
 #[derive(Accounts)]
 pub struct PlayContext<'info> {
     #[account(
-        init,
-        payer = authority,
-        space = 8 + 100,
-        // seeds = [b"game", authority.key().as_ref()], bump
-        )]
+    init,
+    payer = player,
+    space = 8 + 64 + 27,
+    )]
     pub game_match: Account<'info, GameMatch>,
 
     #[account(mut)]
@@ -161,7 +169,7 @@ pub struct PlayContext<'info> {
 
     /// CHECK: ?
     #[account(mut)]
-    authority: Signer<'info>,
+    player: Signer<'info>,
     /// CHECK: sysvar address check is hardcoded, we want to avoid the default deserialization
     #[account(address = sysvar::recent_blockhashes::ID)]
     pub recent_blockhashes: UncheckedAccount<'info>,
@@ -173,7 +181,7 @@ pub struct GameContext<'info> {
     #[account(
     init,
     payer = admin,
-    space = 8 + 79,
+    space = 8 + 79 + 32,
     )]
     pub game: Account<'info, Game>,
 
@@ -190,15 +198,10 @@ pub enum Position {
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq)]
 pub enum Corner {
-    TopLeft,
-    TopRight,
+    Left,
+    Right,
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq)]
-pub enum Status {
-    InProgress,
-    Completed,
-}
 
 fn parse_position(s: &str) -> Option<Position> {
     match s {
@@ -210,16 +213,8 @@ fn parse_position(s: &str) -> Option<Position> {
 
 fn parse_corner(s: &str) -> Option<Corner> {
     match s {
-        "TopLeft" => Some(Corner::TopLeft),
-        "TopRight" => Some(Corner::TopRight),
-        _ => None,
-    }
-}
-
-fn parse_status(s: &str) -> Option<Status> {
-    match s {
-        "InProgress" => Some(Status::InProgress),
-        "Completed" => Some(Status::Completed),
+        "Left" => Some(Corner::Left),
+        "Right" => Some(Corner::Right),
         _ => None,
     }
 }

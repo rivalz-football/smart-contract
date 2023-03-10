@@ -36,7 +36,7 @@ deploy-resume: build
 
 test:
 	#make airdrop || true
-	anchor test
+	anchor run test
 
 test-skip:
 	anchor test --skip-build --skip-deploy

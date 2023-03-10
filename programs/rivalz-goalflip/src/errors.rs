@@ -13,4 +13,7 @@ pub enum ErrorCode {
 
     #[msg("Invalid Corner")]
     InvalidCorner,
+
+    #[msg("No Enough Fund")]
+    NoEnoughFund,
 }
