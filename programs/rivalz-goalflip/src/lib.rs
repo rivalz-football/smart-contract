@@ -1,8 +1,9 @@
-pub mod randomness_tools;
-pub mod recent_blockhashes;
 mod access_control;
 mod errors;
+pub mod randomness_tools;
+pub mod recent_blockhashes;
 
+use crate::errors::ErrorCode;
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::sysvar;
 
@@ -11,9 +12,10 @@ const ADMIN_PUBKEY: &[u8] = b"aut69244nPQ5A23MKwScxMiZxvsYeepBkNuaxK2TqSd";
 
 #[program]
 pub mod rivalz_goalflip {
+
+    use crate::access_control::is_admin;
     use anchor_lang::solana_program;
     use anchor_lang::solana_program::native_token::LAMPORTS_PER_SOL;
-    use crate::access_control::is_admin;
 
     use super::*;
 
@@ -27,17 +29,24 @@ pub mod rivalz_goalflip {
         Ok(())
     }
 
-    pub fn play(ctx: Context<Play>, position: Position, corner: Corner) -> Result<()> {
+    pub fn play(ctx: Context<PlayContext>, position: String, corner: String) -> Result<()> {
         let game_match = &mut ctx.accounts.game_match;
+        let game = &mut ctx.accounts.game;
 
         // Check if the game is already completed
         if game_match.status == Status::Completed {
             return Err(ErrorCode::GameAlreadyCompleted.into());
         }
 
-        // Set the player's position and corner
-        game_match.position = position;
-        game_match.corner = corner;
+        game_match.position = match parse_position(&position) {
+            Some(position) => position,
+            None => return Err(ErrorCode::InvalidPosition.into()),
+        };
+
+        game_match.corner = match parse_corner(&corner) {
+            Some(corner) => corner,
+            None => return Err(ErrorCode::InvalidCorner.into()),
+        };
         game_match.bump = *ctx.bumps.get("game").unwrap();
 
         let randomness =
@@ -53,124 +62,58 @@ pub mod rivalz_goalflip {
         let to = game_match.player;
         let amount = LAMPORTS_PER_SOL / 10;
 
-        // Transfer Solana lamports from the user account to the game account
-        let transfer_to_game = solana_program::system_instruction::transfer(
-            &ctx.accounts.authority.key(),
-            &game_match.to_account_info().key,
-            amount,
-        );
-        solana_program::program::invoke_signed(
-            &transfer_to_game,
-            &[
-                ctx.accounts.authority.to_account_info(),
-                game_match.to_account_info(),
-                ctx.accounts.system_program.to_account_info(),
-            ],
-            &[&[b"transfer".as_ref(), &[0u8; 32]][..]],
-        )?;
+        // Transfer Solana lamports from the game account to the winner account or the program player account
+        let (transfer_to_winner_or_bot_or_player, is_bot_winner) =
+            if game_match.position == Position::Goalkeeper {
+                match game_match.corner {
+                    Corner::TopLeft => (None, random_corner == Corner::TopRight),
+                    _ => (Some(to), random_corner == Corner::TopLeft),
+                }
+            } else {
+                match game_match.corner {
+                    Corner::TopRight => (None, random_corner == Corner::TopLeft),
+                    _ => (Some(to), random_corner == Corner::TopRight),
+                }
+            };
 
-        msg!("Transfer to game account: {} lamports", amount);
-        msg!(
-            "ctx.accounts.authority.key(): {}",
-            ctx.accounts.authority.key()
-        );
-        msg!("game.to_account_info().key: {}", game_match.to_account_info().key);
-        msg!(
-            "game.to_account_info().owner: {}",
-            game_match.to_account_info().owner
-        );
-        msg!(
-            "ctx.accounts.system_program.to_account_info().key: {}",
-            ctx.accounts.system_program.to_account_info().key
-        );
-
-        // Transfer Solana lamports from the game account to the player account or the program owner account
-        let transfer_to_winner_or_owner = if game_match.position == Position::Goalkeeper {
-            match game_match.corner {
-                Corner::TopLeft => None,
-                _ => Some(to),
-            }
-        } else {
-            match game_match.corner {
-                Corner::TopRight => None,
-                _ => Some(to),
-            }
-        };
-
-        // TODO:
-        // 1. Fix Issue:     Error:  An account required by the instruction is missing
-        // 2. Fix Issue:     Error: Program failed to completeError: failed to send transaction:
-        //                   Transaction simulation failed: Error processing Instruction 0: Cross-program invocation
-        //                   with unauthorized signer or writable account
-
-        // if let Some(winner) = transfer_to_winner_or_owner {
-        //     let transfer_to_winner = solana_program::system_instruction::transfer(
-        //         &game.to_account_info().key,
-        //         &winner,
-        //         amount,
-        //     );
-        //     solana_program::program::invoke_signed(
-        //         &transfer_to_winner,
-        //         &[
-        //             ctx.accounts.authority.to_account_info(),
-        //             game.to_account_info(),
-        //             ctx.accounts.system_program.to_account_info(),
-        //         ],
-        //         &[],
-        //     )?;
-        // } else {
-        //     let transfer_to_owner = solana_program::system_instruction::transfer(
-        //         &game.to_account_info().key,
-        //         &game.to_account_info().owner,
-        //         amount,
-        //     );
-        //     solana_program::program::invoke_signed(
-        //         &transfer_to_owner,
-        //         &[
-        //             ctx.accounts.authority.to_account_info(),
-        //             game.to_account_info(),
-        //             ctx.accounts.system_program.to_account_info(),
-        //         ],
-        //         &[&[b"game".as_ref(), &[game.bump]][..]],
-        //     )?;
-        // }
-
+        if is_bot_winner {
+            let transfer_to_bot = solana_program::system_instruction::transfer(
+                &game.to_account_info().key,
+                &to,
+                amount * game.multiplier as u64,
+            );
+            solana_program::program::invoke_signed(
+                &transfer_to_bot,
+                &[
+                    ctx.accounts.authority.to_account_info(),
+                    game.to_account_info(),
+                    ctx.accounts.system_program.to_account_info(),
+                ],
+                &[],
+            )?;
+        } else if let Some(winner_or_bot) = transfer_to_winner_or_bot_or_player {
+            let transfer_to_winner = solana_program::system_instruction::transfer(
+                &game.to_account_info().key,
+                &winner_or_bot,
+                amount,
+            );
+            solana_program::program::invoke_signed(
+                &transfer_to_winner,
+                &[
+                    ctx.accounts.authority.to_account_info(),
+                    game.to_account_info(),
+                    ctx.accounts.system_program.to_account_info(),
+                ],
+                &[],
+            )?;
+        }
         // Update the game status and random corner
-        game_match.status = Status::Completed;
-        game_match.corner = random_corner;
+        // game_match.status = Status::Completed;
+        // game_match.corner = random_corner;
 
         Ok(())
     }
 }
-
-
-#[derive(Accounts)]
-pub struct Play<'info> {
-    #[account(
-    init,
-    payer = authority,
-    space = 8 + 100,
-    seeds = [b"game", authority.key().as_ref()], bump
-    )]
-    pub game: Account<'info, Game>,
-
-    #[account(
-    init,
-    payer = authority,
-    space = 8 + 100,
-    seeds = [b"game", authority.key().as_ref()], bump
-    )]
-    pub game_match: Account<'info, GameMatch>,
-
-    /// CHECK: ?
-    #[account(mut)]
-    authority: Signer<'info>,
-    /// CHECK: sysvar address check is hardcoded, we want to avoid the default deserialization
-    #[account(address = sysvar::recent_blockhashes::ID)]
-    pub recent_blockhashes: UncheckedAccount<'info>,
-    system_program: Program<'info, System>,
-}
-
 
 #[account]
 pub struct GameMatch {
@@ -182,22 +125,6 @@ pub struct GameMatch {
     pub status: Status,
     pub bump: u8,
 }
-
-
-#[derive(Accounts)]
-pub struct GameContext<'info> {
-    #[account(
-    init,
-    payer = admin,
-    space = 8 + 79,
-    )]
-    pub game: Account<'info, Game>,
-
-    #[account(mut)]
-    admin: Signer<'info>,
-    system_program: Program<'info, System>,
-}
-
 
 #[account]
 pub struct Game {
@@ -219,6 +146,42 @@ pub struct Game {
     pub name: Vec<u8>, //  30
 }
 
+#[derive(Accounts)]
+pub struct PlayContext<'info> {
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + 100,
+        // seeds = [b"game", authority.key().as_ref()], bump
+        )]
+    pub game_match: Account<'info, GameMatch>,
+
+    #[account(mut)]
+    pub game: Account<'info, Game>,
+
+    /// CHECK: ?
+    #[account(mut)]
+    authority: Signer<'info>,
+    /// CHECK: sysvar address check is hardcoded, we want to avoid the default deserialization
+    #[account(address = sysvar::recent_blockhashes::ID)]
+    pub recent_blockhashes: UncheckedAccount<'info>,
+    system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct GameContext<'info> {
+    #[account(
+    init,
+    payer = admin,
+    space = 8 + 79,
+    )]
+    pub game: Account<'info, Game>,
+
+    #[account(mut)]
+    admin: Signer<'info>,
+    system_program: Program<'info, System>,
+}
+
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq)]
 pub enum Position {
     Goalkeeper,
@@ -237,8 +200,26 @@ pub enum Status {
     Completed,
 }
 
-#[error_code]
-pub enum ErrorCode {
-    #[msg("Game is already completed")]
-    GameAlreadyCompleted,
+fn parse_position(s: &str) -> Option<Position> {
+    match s {
+        "Goalkeeper" => Some(Position::Goalkeeper),
+        "Forward" => Some(Position::Forward),
+        _ => None,
+    }
+}
+
+fn parse_corner(s: &str) -> Option<Corner> {
+    match s {
+        "TopLeft" => Some(Corner::TopLeft),
+        "TopRight" => Some(Corner::TopRight),
+        _ => None,
+    }
+}
+
+fn parse_status(s: &str) -> Option<Status> {
+    match s {
+        "InProgress" => Some(Status::InProgress),
+        "Completed" => Some(Status::Completed),
+        _ => None,
+    }
 }
