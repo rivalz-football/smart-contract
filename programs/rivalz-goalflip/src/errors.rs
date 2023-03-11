@@ -16,4 +16,7 @@ pub enum ErrorCode {
 
     #[msg("No Enough Fund")]
     NoEnoughFund,
+
+    #[msg("Game Match Already Finished")]
+    GameMatchAlreadyFinished,
 }
