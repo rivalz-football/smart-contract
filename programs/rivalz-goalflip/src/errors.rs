@@ -19,4 +19,7 @@ pub enum ErrorCode {
 
     #[msg("Game Match Already Finished")]
     GameMatchAlreadyFinished,
+
+    #[msg("Wrong Player To Result")]
+    WrongPlayerToResult,
 }

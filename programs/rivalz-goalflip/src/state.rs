@@ -66,8 +66,18 @@ pub struct PlayContext<'info> {
 pub struct ResultGameMatchContext<'info> {
     #[account(mut)]
     pub game: Account<'info, Game>,
+
     #[account(mut)]
     pub game_match: Account<'info, GameMatch>,
+
+    /// CHECK: we will check this in the instruction
+    #[account(mut)]
+    pub player: AccountInfo<'info>,
+
+    /// CHECK: we will check this in the instruction
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
     /// CHECK: sysvar address check is hardcoded, we want to avoid the default deserialization
     #[account(address = sysvar::recent_blockhashes::ID)]
     pub recent_blockhashes: UncheckedAccount<'info>,

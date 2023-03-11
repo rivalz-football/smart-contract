@@ -40,6 +40,7 @@ pub mod rivalz_goalflip {
         ctx.accounts.game_match.bet_amount = bet_amount - ctx.accounts.game.commission;
         ctx.accounts.game_match.status = GameMatchStatus::Pending;
         ctx.accounts.game_match.match_date = Clock::get()?.unix_timestamp as u64;
+        ctx.accounts.game_match.player = ctx.accounts.player.key();
 
         ctx.accounts.game_match.position = match parse_position(&position) {
             Some(position) => position,
@@ -58,14 +59,14 @@ pub mod rivalz_goalflip {
         if ctx.accounts.game.commission > 0 {
             let transfer_to_game = solana_program::system_instruction::transfer(
                 &ctx.accounts.player.key(),
-                &ctx.accounts.game_match.key(),
+                &ctx.accounts.game.key(),
                 ctx.accounts.game.commission,
             );
             solana_program::program::invoke(
                 &transfer_to_game,
                 &[
                     ctx.accounts.player.to_account_info(),
-                    ctx.accounts.game_match.to_account_info(),
+                    ctx.accounts.game.to_account_info(),
                     ctx.accounts.system_program.to_account_info(),
                 ],
             )?;
@@ -73,14 +74,14 @@ pub mod rivalz_goalflip {
 
         let transfer_to_game = solana_program::system_instruction::transfer(
             &ctx.accounts.player.key(),
-            &ctx.accounts.game_match.key(),
+            &ctx.accounts.game.key(),
             ctx.accounts.game_match.bet_amount - ctx.accounts.game.commission,
         );
         solana_program::program::invoke(
             &transfer_to_game,
             &[
                 ctx.accounts.player.to_account_info(),
-                ctx.accounts.game_match.to_account_info(),
+                ctx.accounts.game.to_account_info(),
                 ctx.accounts.system_program.to_account_info(),
             ],
         )?;
@@ -88,9 +89,14 @@ pub mod rivalz_goalflip {
         Ok(())
     }
 
+    #[access_control(is_admin(& ctx.accounts.admin))]
     pub fn result_game_match(ctx: Context<ResultGameMatchContext>) -> Result<()> {
         if ctx.accounts.game_match.status != GameMatchStatus::Pending {
-            return Err(ErrorCode::GameMatchAlreadyFinished.into());
+            return err!(ErrorCode::GameMatchAlreadyFinished);
+        }
+
+        if ctx.accounts.player.key().to_bytes() != ctx.accounts.game_match.player.to_bytes(){
+            return err!(ErrorCode::WrongPlayerToResult)
         }
 
         let randomness =
@@ -106,39 +112,28 @@ pub mod rivalz_goalflip {
 
         if ctx.accounts.game_match.won {
             msg!("you won!");
+            ctx.accounts.game_match.status = GameMatchStatus::Won;
 
             ctx.accounts.game.win_count += 1;
             ctx.accounts.game_match.won_amount =
                 ctx.accounts.game_match.bet_amount * ctx.accounts.game.multiplier as u64;
 
             let transfer_to_game = solana_program::system_instruction::transfer(
-                &ctx.accounts.game_match.key(),
+                &ctx.accounts.game.key(),
                 &ctx.accounts.game_match.player,
                 ctx.accounts.game_match.won_amount,
             );
             solana_program::program::invoke(
                 &transfer_to_game,
                 &[
-                    ctx.accounts.game_match.to_account_info(),
+                    ctx.accounts.game.to_account_info(),
                     ctx.accounts.system_program.to_account_info(),
                 ],
             )?;
         } else {
             msg!("you lost :(");
-
+            ctx.accounts.game_match.status = GameMatchStatus::Lost;
             ctx.accounts.game.lose_count += 1;
-
-            **ctx
-                .accounts
-                .game_match
-                .to_account_info()
-                .try_borrow_mut_lamports()? -= ctx.accounts.game_match.bet_amount;
-
-            **ctx
-                .accounts
-                .game
-                .to_account_info()
-                .try_borrow_mut_lamports()? += ctx.accounts.game_match.bet_amount;
         }
 
         Ok(())
