@@ -3,8 +3,6 @@ seeds = false
 skip-lint = false
 [programs.localnet]
 rivalz_goalflip = "rivi27uFE2UGJCR2WmzddviqS6RWiTzciC8KnVp2rhi"
-[programs.devnet]
-rivalz_goalflip = "rivi27uFE2UGJCR2WmzddviqS6RWiTzciC8KnVp2rhi"
 
 [registry]
 url = "https://api.apr.dev"
