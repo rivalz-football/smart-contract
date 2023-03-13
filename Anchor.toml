@@ -2,14 +2,16 @@
 seeds = false
 skip-lint = false
 [programs.localnet]
-rivalz_goalflip = "AfkTvJCbHWTYwrsxVqVW7sxTbgp561ExzrzXS6BuLqQT"
+rivalz_goalflip = "rivi27uFE2UGJCR2WmzddviqS6RWiTzciC8KnVp2rhi"
+[programs.devnet]
+rivalz_goalflip = "rivi27uFE2UGJCR2WmzddviqS6RWiTzciC8KnVp2rhi"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "Localnet"
-wallet = "/Users/tolgaand/versusclub/my-keypair.json"
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
