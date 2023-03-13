@@ -4,44 +4,40 @@ use anchor_lang::solana_program::sysvar;
 #[account]
 pub struct GameMatch {
     pub game: Pubkey,
-    //32
     pub player: Pubkey,
-    //32
     pub won: bool,
-    //1
     pub position: Position,
-    //1
     pub player_corner: Corner,
-    //1
     pub bet_amount: u64,
-    //8
+    pub commission_amount: u64,
     pub won_amount: u64,
-    //8
-    pub match_date: u64, //8
+    pub created_at: u64,
     pub status: GameMatchStatus,
+}
+
+#[event]
+pub struct ResultGameMatchEvent {
+    pub game: Pubkey,
+    pub player: Pubkey,
+    pub won: bool,
+    pub position: Position,
+    pub player_corner: Corner,
+    pub bet_amount: u64,
+    pub commission_amount: u64,
+    pub won_amount: u64,
 }
 
 #[account]
 pub struct Game {
-    pub multiplier: u8,
-    // 1
-    // lamport cinsinden
-    pub commission: u64,
-    // 8
-    pub init_at: u64,
-    // 8
+    pub multiplier: u16,
+    pub commission_rate: u16,
+    pub created_at: u64,
     pub last_play_date: u64,
-    //8
     pub lose_count: u64,
-    //8
     pub win_count: u64,
-    //8
     pub total_volume: u64,
-    //32
     pub latest_match: Pubkey,
-    //32
-    //8
-    pub name: Vec<u8>, //  30
+    pub name: Vec<u8>,
 }
 
 #[derive(Accounts)]
@@ -49,7 +45,7 @@ pub struct PlayContext<'info> {
     #[account(
     init,
     payer = player,
-    space = 8 + 64 + 27 + 1,
+    space = 8 + 105,
     )]
     pub game_match: Account<'info, GameMatch>,
 
@@ -89,7 +85,7 @@ pub struct GameContext<'info> {
     #[account(
     init,
     payer = admin,
-    space = 8 + 79 + 32,
+    space = 8 + 92 + 1,
     )]
     pub game: Account<'info, Game>,
 
