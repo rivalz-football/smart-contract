@@ -126,20 +126,17 @@ pub mod rivalz_goalflip {
                 / 1000 as u64;
 
             msg!("won_amount: {}", ctx.accounts.game_match.won_amount);
+            **ctx
+                .accounts
+                .game
+                .to_account_info()
+                .try_borrow_mut_lamports()? -= ctx.accounts.game_match.won_amount;
 
-            let transfer_to_player = solana_program::system_instruction::transfer(
-                &ctx.accounts.game.key(),
-                &ctx.accounts.player.key(),
-                ctx.accounts.game_match.won_amount,
-            );
-            solana_program::program::invoke(
-                &transfer_to_player,
-                &[
-                    ctx.accounts.game.to_account_info(),
-                    ctx.accounts.player.to_account_info(),
-                    ctx.accounts.system_program.to_account_info(),
-                ],
-            )?;
+            **ctx
+                .accounts
+                .player
+                .to_account_info()
+                .try_borrow_mut_lamports()? += ctx.accounts.game_match.won_amount
         } else {
             msg!("you lost :(");
             ctx.accounts.game_match.status = GameMatchStatus::Lost;
