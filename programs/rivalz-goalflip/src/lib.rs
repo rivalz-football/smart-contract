@@ -62,26 +62,10 @@ pub mod rivalz_goalflip {
             return err!(ErrorCode::NoEnoughFund);
         }
 
-        if ctx.accounts.game.commission_rate > 0 {
-            let transfer_to_game = solana_program::system_instruction::transfer(
-                &ctx.accounts.player.key(),
-                &ctx.accounts.game.key(),
-                ctx.accounts.game_match.commission_amount,
-            );
-            solana_program::program::invoke(
-                &transfer_to_game,
-                &[
-                    ctx.accounts.player.to_account_info(),
-                    ctx.accounts.game.to_account_info(),
-                    ctx.accounts.system_program.to_account_info(),
-                ],
-            )?;
-        }
-
         let transfer_to_game = solana_program::system_instruction::transfer(
             &ctx.accounts.player.key(),
             &ctx.accounts.game.key(),
-            ctx.accounts.game_match.bet_amount,
+            ctx.accounts.game_match.bet_amount + ctx.accounts.game_match.commission_amount,
         );
         solana_program::program::invoke(
             &transfer_to_game,
